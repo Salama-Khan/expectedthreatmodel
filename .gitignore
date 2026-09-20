@@ -1,0 +1,28 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+
+# Environment and local tooling
+.env
+.env.*
+!.env.example
+.DS_Store
+.vscode/
+.idea/
+*.log
+*.local
+
+# Cursor
+.cursor/
