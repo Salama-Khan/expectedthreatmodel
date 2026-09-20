@@ -14,6 +14,10 @@ The model is unsmoothed and trained on a small open-data corpus. Values are expl
 
 ![Players view](screenshots/players.png)
 
+**The model** — the global 16×12 xT surface. Threat rises toward goal; this grid is shared across matches, not a single-game heatmap.
+
+![Model view](screenshots/model.png)
+
 ## What you can explore
 
 - **Match** — interactive pitch, action filters, and an xT timeline
