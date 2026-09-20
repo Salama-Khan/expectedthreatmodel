@@ -4,17 +4,15 @@ Touchline is a full-stack football analytics app that turns [StatsBomb Open Data
 
 It ingests event-level match data into Postgres, fits a [Karun Singh-style](https://karun.in/blog/expected-threat.html) xT surface on a 16×12 pitch grid, and scores every pass, carry, and shot so you can inspect **who moved threat**, not just who shot.
 
+![Touchline match view: Barcelona 3–0 Deportivo Alavés, with an interactive pitch and xT timeline](screenshots/match.png)
+
 The model is unsmoothed and trained on a small open-data corpus. Values are exploratory, not a production-grade xT product.
 
 ## Screenshots
 
-After `npm run dev`, capture the Match, Players, and Model views and save them as:
+**Players** — ranked on-ball impact. Positive xT is threat created; net xT subtracts value lost on incomplete passes.
 
-- `docs/screenshots/match.png`
-- `docs/screenshots/players.png`
-- `docs/screenshots/model.png`
-
-Then embed them here. A live capture of the pitch explorer is the first thing a reviewer should see.
+![Players view](screenshots/players.png)
 
 ## What you can explore
 
