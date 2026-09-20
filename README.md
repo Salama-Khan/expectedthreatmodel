@@ -27,12 +27,12 @@ The model is unsmoothed and trained on a small open-data corpus. Values are expl
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
   StatsBomb[StatsBomb JSON] --> Transform[Polars transform]
   Transform --> Postgres[(PostgreSQL)]
-  Postgres --> XtEngine[xT engine]
+  Postgres --> XtEngine["xT solver (I - P) xT = b"]
   XtEngine --> API[FastAPI]
-  API --> UI[React Touchline UI]
+  API --> UI[React UI]
 ```
 
 | Layer | Role |
