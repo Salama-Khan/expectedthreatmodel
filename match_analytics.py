@@ -113,6 +113,53 @@ def score_on_ball_events(
     return scored
 
 
+def actions_from_stored_threat(
+    rows: Sequence[Mapping[str, Any]],
+    surface: Sequence[float],
+    *,
+    grid_columns: int,
+    grid_rows: int,
+) -> list[dict[str, Any]]:
+    """Use event_threat values when the row has them.
+
+    Shots are not stored in event_threat. They keep a start-zone value from the
+    stored surface and no movement delta, which is the same rule as scoring.
+    """
+    actions: list[dict[str, Any]] = []
+    for row in rows:
+        action = {
+            key: value
+            for key, value in dict(row).items()
+            if key not in {"xt_start", "xt_end", "delta_xt"}
+        }
+        action["event_id"] = str(row["event_id"])
+        stored_start = row.get("xt_start")
+        if stored_start is not None:
+            end = row.get("xt_end")
+            delta = row.get("delta_xt")
+            action["xt_start"] = float(stored_start)
+            action["xt_end"] = None if end is None else float(end)
+            action["delta_xt"] = None if delta is None else float(delta)
+            actions.append(action)
+            continue
+        if str(row.get("action_type")) != "Shot":
+            continue
+        action["xt_start"] = float(
+            surface[
+                zone_index(
+                    float(row["location_x"]),
+                    float(row["location_y"]),
+                    grid_columns=grid_columns,
+                    grid_rows=grid_rows,
+                )
+            ]
+        )
+        action["xt_end"] = None
+        action["delta_xt"] = None
+        actions.append(action)
+    return actions
+
+
 def score_match_actions(
     rows: Sequence[Mapping[str, Any]],
     surface: Sequence[float],

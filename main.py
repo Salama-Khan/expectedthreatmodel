@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from threading import Lock
+from collections.abc import Iterator
 from typing import Any
 
 import psycopg
@@ -23,14 +21,10 @@ from api_schemas import (
     ThreatSurfaceResponse,
     ZoneThreat,
 )
-from match_analytics import player_impacts, score_match_actions, team_threat_summaries
-from xt_engine import (
-    DEFAULT_GRID_COLUMNS,
-    DEFAULT_GRID_ROWS,
-    MOVES_QUERY,
-    SHOTS_QUERY,
-    TRANSITIONS_QUERY,
-    fit_xt_surface,
+from match_analytics import (
+    actions_from_stored_threat,
+    player_impacts,
+    team_threat_summaries,
 )
 
 MODEL_ID = "singh-xt"
@@ -57,16 +51,6 @@ SHOWCASE_METADATA: dict[int, dict[str, Any]] = {
     },
 }
 
-
-@dataclass(frozen=True)
-class SurfaceSnapshot:
-    values: tuple[float, ...]
-    training_matches: int
-    training_actions: int
-
-
-_surface_snapshot: SurfaceSnapshot | None = None
-_surface_lock = Lock()
 
 app = FastAPI(
     title="Expected Threat Explorer API",
@@ -96,17 +80,28 @@ def get_connection() -> Iterator[DbConnection]:
         yield conn
 
 
-def table_from_rows(
-    rows: Sequence[Mapping[str, Any]],
-    columns: Sequence[str],
-) -> dict[str, list[Any]]:
-    """Pivot dictionary rows into the column-oriented table used by the solver."""
-    return {column: [row[column] for row in rows] for column in columns}
+def stored_surface(conn: DbConnection) -> tuple[list[float], int, int]:
+    """Read the fitted vector written at load time."""
+    row = conn.execute(
+        """
+        SELECT grid_columns, grid_rows, validation_metrics
+        FROM xt_models
+        WHERE model_id = %s AND model_version = %s AND status = 'ready'
+        """,
+        (MODEL_ID, MODEL_VERSION),
+    ).fetchone()
+    metrics = row["validation_metrics"] if row else None
+    values = metrics.get("xt") if isinstance(metrics, dict) else None
+    if row is None or not values:
+        raise HTTPException(status_code=404, detail="xT model singh-xt/v1 is not stored")
+    return (
+        [float(value) for value in values],
+        int(row["grid_columns"]),
+        int(row["grid_rows"]),
+    )
 
 
-def fitted_surface(conn: DbConnection) -> SurfaceSnapshot:
-    """Fit the global model and reuse it until more matches are ingested."""
-    global _surface_snapshot
+def training_counts(conn: DbConnection) -> tuple[int, int]:
     stats = conn.execute(
         """
         SELECT
@@ -117,51 +112,9 @@ def fitted_surface(conn: DbConnection) -> SurfaceSnapshot:
         FROM events
         """
     ).fetchone()
-    training_matches = int(stats["training_matches"]) if stats else 0
-    training_actions = int(stats["training_actions"]) if stats else 0
-
-    cached = _surface_snapshot
-    if (
-        cached is not None
-        and cached.training_matches == training_matches
-        and cached.training_actions == training_actions
-    ):
-        return cached
-
-    with _surface_lock:
-        cached = _surface_snapshot
-        if (
-            cached is not None
-            and cached.training_matches == training_matches
-            and cached.training_actions == training_actions
-        ):
-            return cached
-
-        shots = table_from_rows(
-            conn.execute(SHOTS_QUERY).fetchall(),
-            ("zone_index", "shot_attempts", "goals"),
-        )
-        moves = table_from_rows(
-            conn.execute(MOVES_QUERY).fetchall(),
-            ("zone_index", "move_attempts", "successful_moves"),
-        )
-        transitions = table_from_rows(
-            conn.execute(TRANSITIONS_QUERY).fetchall(),
-            ("origin_zone", "dest_zone", "n"),
-        )
-        xt_values = fit_xt_surface(
-            shots,
-            moves,
-            transitions,
-            grid_columns=DEFAULT_GRID_COLUMNS,
-            grid_rows=DEFAULT_GRID_ROWS,
-        )
-        _surface_snapshot = SurfaceSnapshot(
-            values=tuple(float(value) for value in xt_values),
-            training_matches=training_matches,
-            training_actions=training_actions,
-        )
-        return _surface_snapshot
+    if stats is None:
+        return 0, 0
+    return int(stats["training_matches"]), int(stats["training_actions"])
 
 
 @app.get("/api/health")
@@ -261,17 +214,18 @@ def list_matches(conn: DbConnection = Depends(get_connection)) -> list[MatchSumm
 def xt_surface(
     conn: DbConnection = Depends(get_connection),
 ) -> ThreatSurfaceResponse:
-    snapshot = fitted_surface(conn)
+    values, grid_columns, grid_rows = stored_surface(conn)
+    training_matches, training_actions = training_counts(conn)
     return ThreatSurfaceResponse(
         model_id=MODEL_ID,
         model_version=MODEL_VERSION,
-        grid_columns=DEFAULT_GRID_COLUMNS,
-        grid_rows=DEFAULT_GRID_ROWS,
-        training_matches=snapshot.training_matches,
-        training_actions=snapshot.training_actions,
+        grid_columns=grid_columns,
+        grid_rows=grid_rows,
+        training_matches=training_matches,
+        training_actions=training_actions,
         zones=[
             ZoneThreat(zone_index=index, xt_value=float(value))
-            for index, value in enumerate(snapshot.values)
+            for index, value in enumerate(values)
         ],
     )
 
@@ -326,25 +280,32 @@ def match_analytics(
             e.location_x,
             e.location_y,
             e.end_location_x,
-            e.end_location_y
+            e.end_location_y,
+            et.xt_start,
+            et.xt_end,
+            et.delta_xt
         FROM events e
         JOIN teams t ON t.team_id = e.team_id
         LEFT JOIN players p ON p.player_id = e.actor_player_id
+        LEFT JOIN event_threat et
+            ON et.event_id = e.event_id
+           AND et.model_id = %s
+           AND et.model_version = %s
         WHERE e.match_id = %s
           AND e.type_name IN ('Pass', 'Carry', 'Shot')
           AND e.location_x IS NOT NULL
           AND e.location_y IS NOT NULL
         ORDER BY e.event_index
         """,
-        (match_id,),
+        (MODEL_ID, MODEL_VERSION, match_id),
     ).fetchall()
 
-    snapshot = fitted_surface(conn)
-    actions = score_match_actions(
+    values, grid_columns, grid_rows = stored_surface(conn)
+    actions = actions_from_stored_threat(
         action_rows,
-        snapshot.values,
-        grid_columns=DEFAULT_GRID_COLUMNS,
-        grid_rows=DEFAULT_GRID_ROWS,
+        values,
+        grid_columns=grid_columns,
+        grid_rows=grid_rows,
     )
     first = context_rows[0]
     labels = _apply_showcase_metadata(

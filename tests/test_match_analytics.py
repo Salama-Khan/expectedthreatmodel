@@ -4,6 +4,7 @@ import unittest
 
 from api_schemas import MatchAction, MatchAnalyticsResponse, MatchTeam
 from match_analytics import (
+    actions_from_stored_threat,
     player_impacts,
     score_match_actions,
     score_on_ball_events,
@@ -93,6 +94,39 @@ class MatchScoringTests(unittest.TestCase):
         self.assertAlmostEqual(float(scored[0]["xt_start"]), 0.01)
         self.assertEqual(scored[0]["xt_end"], 0.0)
         self.assertNotIn("delta_xt", scored[0])
+
+    def test_stored_threat_is_used_for_passes_and_surface_for_shots(self) -> None:
+        actions = actions_from_stored_threat(
+            [
+                {
+                    "event_id": "00000000-0000-0000-0000-000000000002",
+                    "event_index": 2,
+                    "action_type": "Pass",
+                    "location_x": 80.0,
+                    "location_y": 10.0,
+                    "xt_start": 0.2,
+                    "xt_end": 0.0,
+                    "delta_xt": -0.2,
+                },
+                {
+                    "event_id": "00000000-0000-0000-0000-000000000003",
+                    "event_index": 3,
+                    "action_type": "Shot",
+                    "location_x": 80.0,
+                    "location_y": 10.0,
+                    "xt_start": None,
+                    "xt_end": None,
+                    "delta_xt": None,
+                },
+            ],
+            self.surface,
+            grid_columns=2,
+            grid_rows=2,
+        )
+        self.assertEqual(actions[0]["xt_end"], 0.0)
+        self.assertAlmostEqual(actions[0]["delta_xt"], -0.2)
+        self.assertAlmostEqual(actions[1]["xt_start"], 0.01)
+        self.assertIsNone(actions[1]["delta_xt"])
 
     def test_player_impact_separates_positive_and_net_value(self) -> None:
         actions = score_match_actions(
