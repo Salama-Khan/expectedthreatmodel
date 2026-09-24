@@ -25,6 +25,94 @@ def zone_index(
     return row * grid_columns + column
 
 
+def end_zone_xt(
+    action_type: str,
+    outcome: object,
+    surface: Sequence[float],
+    end_x: object,
+    end_y: object,
+    *,
+    grid_columns: int,
+    grid_rows: int,
+) -> float | None:
+    """xT at the end of an on-ball action.
+
+    A pass with any outcome has already failed, so it leaks to 0 and does not
+    read the destination zone. Successful passes and carries use that zone.
+    Shots have no movement value.
+    """
+    if action_type == "Pass" and outcome is not None:
+        return 0.0
+    if action_type in {"Pass", "Carry"} and end_x is not None and end_y is not None:
+        return float(
+            surface[
+                zone_index(
+                    float(end_x),
+                    float(end_y),
+                    grid_columns=grid_columns,
+                    grid_rows=grid_rows,
+                )
+            ]
+        )
+    return None
+
+
+def score_on_ball_events(
+    rows: Sequence[Mapping[str, Any]],
+    surface: Sequence[float],
+    *,
+    grid_columns: int,
+    grid_rows: int,
+) -> list[dict[str, float | str]]:
+    """Score events-table rows to xt_start and xt_end.
+
+    Only passes and carries are returned. delta_xt is omitted because
+    event_threat generates it as xt_end - xt_start.
+    """
+    expected_cells = grid_columns * grid_rows
+    if len(surface) != expected_cells:
+        raise ValueError(
+            f"surface has {len(surface)} cells; expected {expected_cells}"
+        )
+
+    scored: list[dict[str, float | str]] = []
+    for row in rows:
+        action_type = str(row.get("type_name") or row.get("action_type") or "")
+        end_xt = end_zone_xt(
+            action_type,
+            row.get("outcome"),
+            surface,
+            row.get("end_location_x"),
+            row.get("end_location_y"),
+            grid_columns=grid_columns,
+            grid_rows=grid_rows,
+        )
+        if end_xt is None:
+            continue
+        start_x = row.get("location_x")
+        start_y = row.get("location_y")
+        if start_x is None or start_y is None:
+            continue
+        start_xt = float(
+            surface[
+                zone_index(
+                    float(start_x),
+                    float(start_y),
+                    grid_columns=grid_columns,
+                    grid_rows=grid_rows,
+                )
+            ]
+        )
+        scored.append(
+            {
+                "event_id": str(row["event_id"]),
+                "xt_start": start_xt,
+                "xt_end": end_xt,
+            }
+        )
+    return scored
+
+
 def score_match_actions(
     rows: Sequence[Mapping[str, Any]],
     surface: Sequence[float],
@@ -60,27 +148,16 @@ def score_match_actions(
         )
 
         action_type = str(row["action_type"])
-        outcome = row.get("outcome")
-        end_x = row.get("end_location_x")
-        end_y = row.get("end_location_y")
-        end_xt: float | None = None
-        delta_xt: float | None = None
-
-        if action_type == "Pass" and outcome is not None:
-            end_xt = 0.0
-            delta_xt = -start_xt
-        elif action_type in {"Pass", "Carry"} and end_x is not None and end_y is not None:
-            end_xt = float(
-                surface[
-                    zone_index(
-                        float(end_x),
-                        float(end_y),
-                        grid_columns=grid_columns,
-                        grid_rows=grid_rows,
-                    )
-                ]
-            )
-            delta_xt = end_xt - start_xt
+        end_xt = end_zone_xt(
+            action_type,
+            row.get("outcome"),
+            surface,
+            row.get("end_location_x"),
+            row.get("end_location_y"),
+            grid_columns=grid_columns,
+            grid_rows=grid_rows,
+        )
+        delta_xt = None if end_xt is None else end_xt - start_xt
 
         scored.append(
             {

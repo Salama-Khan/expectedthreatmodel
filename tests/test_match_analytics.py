@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from api_schemas import MatchAction, MatchAnalyticsResponse, MatchTeam
-from match_analytics import player_impacts, score_match_actions, zone_index
+from match_analytics import (
+    player_impacts,
+    score_match_actions,
+    score_on_ball_events,
+    zone_index,
+)
 
 
 class ZoneIndexTests(unittest.TestCase):
@@ -66,6 +71,28 @@ class MatchScoringTests(unittest.TestCase):
         self.assertAlmostEqual(actions[0]["delta_xt"], 0.01)
         self.assertAlmostEqual(actions[1]["delta_xt"], -0.01)
         self.assertEqual(actions[1]["xt_end"], 0.0)
+
+    def test_failed_pass_does_not_inherit_destination_zone(self) -> None:
+        scored = score_on_ball_events(
+            [
+                {
+                    "event_id": "00000000-0000-0000-0000-000000000002",
+                    "type_name": "Pass",
+                    "outcome": "Incomplete",
+                    "location_x": 80.0,
+                    "location_y": 10.0,
+                    "end_location_x": 110.0,
+                    "end_location_y": 70.0,
+                }
+            ],
+            self.surface,
+            grid_columns=2,
+            grid_rows=2,
+        )
+        self.assertEqual(len(scored), 1)
+        self.assertAlmostEqual(float(scored[0]["xt_start"]), 0.01)
+        self.assertEqual(scored[0]["xt_end"], 0.0)
+        self.assertNotIn("delta_xt", scored[0])
 
     def test_player_impact_separates_positive_and_net_value(self) -> None:
         actions = score_match_actions(
