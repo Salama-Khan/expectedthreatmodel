@@ -329,25 +329,27 @@ class EventsLoader:
         )
         if not scored:
             return
-        self._conn.executemany(
-            """
-            INSERT INTO event_threat (
-                model_id, model_version, event_id, xt_start, xt_end
-            )
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (model_id, model_version, event_id) DO NOTHING
-            """,
-            [
-                (
-                    MODEL_ID,
-                    MODEL_VERSION,
-                    item["event_id"],
-                    item["xt_start"],
-                    item["xt_end"],
+        # psycopg 3 exposes executemany on the cursor, not the connection.
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO event_threat (
+                    model_id, model_version, event_id, xt_start, xt_end
                 )
-                for item in scored
-            ],
-        )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (model_id, model_version, event_id) DO NOTHING
+                """,
+                [
+                    (
+                        MODEL_ID,
+                        MODEL_VERSION,
+                        item["event_id"],
+                        item["xt_start"],
+                        item["xt_end"],
+                    )
+                    for item in scored
+                ],
+            )
 
     def _copy_events(self, events: pl.DataFrame) -> None:
         copy_sql = sql.SQL(
