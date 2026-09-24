@@ -34,6 +34,18 @@ flowchart TD
   XtEngine --> API[FastAPI]
   API --> UI[React UI]
 ```
+## Pass-complete check (not xT)
+
+[`pass_complete.py`](pass_complete.py) is a leakage check, not a second threat model.
+
+- **Label:** same rule as scoring. `outcome IS NULL` → complete. Any outcome → failed (leak to zero).
+- **Features:** start zone and end zone on the 16×12 grid.
+- **Split:** `GroupShuffleSplit` on `match_id`. Held-out matches: `7538`, `7539`, `8650` (2,743 passes).
+- **Base rate:** 2,197 complete / 546 incomplete. A dummy that always predicts complete is already ~80% accurate. The model is 82.5%.
+- **Failed-pass recall:** 0.181 (99 of 546). Precision on that call is 0.756 — when it says failed, it is usually right; it almost never says failed.
+- **Complete recall:** 0.985. Macro-average recall is 0.583.
+
+Start/end zone does not see pressure, height, or receiver, so most failures look like ordinary zone-to-zone passes. That is why Touchline scores a failed pass with the leak-to-zero rule, not this classifier.
 
 | Layer | Role |
 | --- | --- |
@@ -41,6 +53,7 @@ flowchart TD
 | [`events_transform.py`](events_transform.py) / [`events_loader.py`](events_loader.py) | Flatten StatsBomb events and COPY them into Postgres |
 | [`xt_engine.py`](xt_engine.py) | Solve `(I - P) xT = b` from shots, moves, and zone transitions |
 | [`main.py`](main.py) | REST API for matches, the xT surface, and scored analytics |
+| [`pass_complete.py`](pass_complete.py) | Logistic regression on pass start/end zone; split by match |
 | [`frontend/src`](frontend/src) | Vite + React + TypeScript explorer |
 
 ## Quick start
