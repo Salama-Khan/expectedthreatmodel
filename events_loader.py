@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 from uuid import UUID
 
 import polars as pl
@@ -13,10 +14,43 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from events_transform import EVENTS_SCHEMA, partition_off_pitch
+from match_analytics import score_on_ball_events
+from xt_engine import (
+    DEFAULT_GRID_COLUMNS,
+    DEFAULT_GRID_ROWS,
+    MOVES_QUERY,
+    SHOTS_QUERY,
+    TRANSITIONS_QUERY,
+    fit_xt_surface,
+)
 
 logger = logging.getLogger(__name__)
 
 EVENTS_COLUMNS: tuple[str, ...] = tuple(EVENTS_SCHEMA)
+MODEL_ID = "singh-xt"
+MODEL_VERSION = "v1"
+SOLVER_NAME = "numpy.linalg.solve"
+SOLVER_TOLERANCE = 1e-8
+
+
+def drop_known_event_ids(events: pl.DataFrame, known_ids: set[str]) -> pl.DataFrame:
+    """Drop ids already stored so a second load of the same match does not copy them."""
+    if events.height == 0 or not known_ids:
+        return events
+    return events.filter(~pl.col("event_id").is_in(sorted(known_ids)))
+
+
+def _surface_hash(values: Sequence[float]) -> str:
+    payload = ",".join(f"{value:.10f}" for value in values)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _column_table(rows: Sequence[Sequence[Any]], columns: Sequence[str]) -> dict[str, list[Any]]:
+    table: dict[str, list[Any]] = {name: [] for name in columns}
+    for row in rows:
+        for index, name in enumerate(columns):
+            table[name].append(row[index])
+    return table
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,15 +96,19 @@ class EventsLoader:
 
         prepared = self._prepare_events(events, run_id)
         kept, rejected = partition_off_pitch(prepared)
-        inserted_count = kept.height
         quarantined_count = rejected.height
+        inserted_count = kept.height
 
         try:
             # I COPY events and mark the run completed in one strict transaction.
             # Off-pitch rows go to quarantined_events so they never fail the pitch CHECKs.
             with self._conn.transaction():
-                self._copy_events(kept)
+                kept = drop_known_event_ids(kept, self._loaded_event_ids(kept))
+                inserted_count = kept.height
+                if kept.height:
+                    self._copy_events(kept)
                 self._copy_quarantine(rejected)
+                self._write_model_and_threat(run_id)
                 self._mark_completed(run_id, inserted_count, quarantined_count)
         except psycopg.IntegrityError as exc:
             # I already rolled back the COPY via the transaction context.
@@ -151,6 +189,165 @@ class EventsLoader:
         if float_cols:
             prepared = prepared.with_columns(pl.col(float_cols).fill_nan(None))
         return prepared
+
+    def _loaded_event_ids(self, events: pl.DataFrame) -> set[str]:
+        if events.height == 0:
+            return set()
+        rows = self._conn.execute(
+            "SELECT event_id::text FROM events WHERE event_id = ANY(%s::uuid[])",
+            (events["event_id"].to_list(),),
+        ).fetchall()
+        return {row[0] for row in rows}
+
+    def _fit_surface(self) -> list[float]:
+        shots = _column_table(
+            self._conn.execute(SHOTS_QUERY).fetchall(),
+            ("zone_index", "shot_attempts", "goals"),
+        )
+        moves = _column_table(
+            self._conn.execute(MOVES_QUERY).fetchall(),
+            ("zone_index", "move_attempts", "successful_moves"),
+        )
+        transitions = _column_table(
+            self._conn.execute(TRANSITIONS_QUERY).fetchall(),
+            ("origin_zone", "dest_zone", "n"),
+        )
+        fitted = fit_xt_surface(
+            shots,
+            moves,
+            transitions,
+            grid_columns=DEFAULT_GRID_COLUMNS,
+            grid_rows=DEFAULT_GRID_ROWS,
+        )
+        return [float(value) for value in fitted]
+
+    def _stored_surface(self) -> list[float] | None:
+        row = self._conn.execute(
+            """
+            SELECT validation_metrics
+            FROM xt_models
+            WHERE model_id = %s AND model_version = %s AND status = 'ready'
+            """,
+            (MODEL_ID, MODEL_VERSION),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return [float(value) for value in row[0]["xt"]]
+
+    def _write_model_and_threat(self, run_id: UUID) -> None:
+        # The registry has no array column, so the fitted vector lives in validation_metrics.
+        # I fit once: a later load reuses singh-xt/v1 and only scores events that have no row yet.
+        surface = self._stored_surface()
+        if surface is None:
+            surface = self._fit_surface()
+            source_hash = self._conn.execute(
+                """
+                SELECT COALESCE(
+                    md5(string_agg(event_id::text, ',' ORDER BY event_id)),
+                    md5('')
+                )
+                FROM events
+                """
+            ).fetchone()
+            self._conn.execute(
+                """
+                INSERT INTO xt_models (
+                    model_id,
+                    model_version,
+                    run_id,
+                    artifact_hash,
+                    training_manifest,
+                    source_data_hash,
+                    grid_columns,
+                    grid_rows,
+                    coordinate_convention,
+                    solver,
+                    tolerance,
+                    status,
+                    validation_metrics
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'statsbomb', %s, %s, 'ready', %s)
+                ON CONFLICT (model_id, model_version) DO NOTHING
+                """,
+                (
+                    MODEL_ID,
+                    MODEL_VERSION,
+                    run_id,
+                    _surface_hash(surface),
+                    "pass, carry, and shot counts on the stored events",
+                    source_hash[0] if source_hash else "",
+                    DEFAULT_GRID_COLUMNS,
+                    DEFAULT_GRID_ROWS,
+                    SOLVER_NAME,
+                    SOLVER_TOLERANCE,
+                    Jsonb({"xt": surface}),
+                ),
+            )
+            stored = self._stored_surface()
+            if stored is None:
+                raise RuntimeError("I expected xt_models to contain singh-xt/v1 after insert")
+            surface = stored
+
+        pending = self._conn.execute(
+            """
+            SELECT
+                e.event_id::text,
+                e.type_name,
+                e.outcome,
+                e.location_x,
+                e.location_y,
+                e.end_location_x,
+                e.end_location_y
+            FROM events AS e
+            WHERE e.type_name IN ('Pass', 'Carry')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM event_threat AS t
+                  WHERE t.event_id = e.event_id
+                    AND t.model_id = %s
+                    AND t.model_version = %s
+              )
+            """,
+            (MODEL_ID, MODEL_VERSION),
+        ).fetchall()
+        scored = score_on_ball_events(
+            [
+                {
+                    "event_id": row[0],
+                    "type_name": row[1],
+                    "outcome": row[2],
+                    "location_x": row[3],
+                    "location_y": row[4],
+                    "end_location_x": row[5],
+                    "end_location_y": row[6],
+                }
+                for row in pending
+            ],
+            surface,
+            grid_columns=DEFAULT_GRID_COLUMNS,
+            grid_rows=DEFAULT_GRID_ROWS,
+        )
+        if not scored:
+            return
+        self._conn.executemany(
+            """
+            INSERT INTO event_threat (
+                model_id, model_version, event_id, xt_start, xt_end
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (model_id, model_version, event_id) DO NOTHING
+            """,
+            [
+                (
+                    MODEL_ID,
+                    MODEL_VERSION,
+                    item["event_id"],
+                    item["xt_start"],
+                    item["xt_end"],
+                )
+                for item in scored
+            ],
+        )
 
     def _copy_events(self, events: pl.DataFrame) -> None:
         copy_sql = sql.SQL(
