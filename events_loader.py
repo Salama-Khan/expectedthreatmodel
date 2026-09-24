@@ -12,7 +12,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from events_transform import EVENTS_SCHEMA
+from events_transform import EVENTS_SCHEMA, partition_off_pitch
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ class IngestResult:
 
     run_id: UUID
     inserted_count: int
+    quarantined_count: int = 0
     status: str = "completed"
 
 
@@ -60,13 +61,17 @@ class EventsLoader:
             )
 
         prepared = self._prepare_events(events, run_id)
-        inserted_count = prepared.height
+        kept, rejected = partition_off_pitch(prepared)
+        inserted_count = kept.height
+        quarantined_count = rejected.height
 
         try:
             # I COPY events and mark the run completed in one strict transaction.
+            # Off-pitch rows go to quarantined_events so they never fail the pitch CHECKs.
             with self._conn.transaction():
-                self._copy_events(prepared)
-                self._mark_completed(run_id, inserted_count)
+                self._copy_events(kept)
+                self._copy_quarantine(rejected)
+                self._mark_completed(run_id, inserted_count, quarantined_count)
         except psycopg.IntegrityError as exc:
             # I already rolled back the COPY via the transaction context.
             logger.exception(
@@ -84,11 +89,16 @@ class EventsLoader:
             raise
 
         logger.info(
-            "I completed events load run_id=%s inserted_count=%s",
+            "I completed events load run_id=%s inserted_count=%s quarantined_count=%s",
             run_id,
             inserted_count,
+            quarantined_count,
         )
-        return IngestResult(run_id=run_id, inserted_count=inserted_count)
+        return IngestResult(
+            run_id=run_id,
+            inserted_count=inserted_count,
+            quarantined_count=quarantined_count,
+        )
 
     def _start_run(
         self,
@@ -161,7 +171,37 @@ class EventsLoader:
                 for start in range(0, len(view), chunk_size):
                     copy.write(view[start : start + chunk_size])
 
-    def _mark_completed(self, run_id: UUID, inserted_count: int) -> None:
+    def _copy_quarantine(self, rejected: pl.DataFrame) -> None:
+        if rejected.height == 0:
+            return
+        columns = (
+            "run_id",
+            "event_id",
+            "match_id",
+            "event_index",
+            "reason",
+            "location_x",
+            "location_y",
+            "end_location_x",
+            "end_location_y",
+        )
+        copy_sql = sql.SQL(
+            "COPY {} ({}) FROM STDIN WITH (FORMAT csv, HEADER false, NULL '', ENCODING 'UTF8')"
+        ).format(
+            sql.Identifier("quarantined_events"),
+            sql.SQL(", ").join(sql.Identifier(name) for name in columns),
+        )
+        payload = rejected.select(list(columns)).write_csv(
+            include_header=False,
+            null_value="",
+        )
+        with self._conn.cursor() as cur:
+            with cur.copy(copy_sql) as copy:
+                copy.write(payload.encode("utf-8"))
+
+    def _mark_completed(
+        self, run_id: UUID, inserted_count: int, quarantined_count: int
+    ) -> None:
         # I set completed_at here because the table forbids completed without a timestamp.
         self._conn.execute(
             """
@@ -169,11 +209,12 @@ class EventsLoader:
             SET
                 status = 'completed',
                 inserted_count = %s,
+                quarantined_count = %s,
                 completed_at = NOW(),
                 error_log = NULL
             WHERE run_id = %s
             """,
-            (inserted_count, run_id),
+            (inserted_count, quarantined_count, run_id),
         )
 
     def _mark_failed(self, run_id: UUID, exc: BaseException) -> None:

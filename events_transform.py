@@ -10,6 +10,20 @@ from typing import Sequence
 
 import polars as pl
 
+# StatsBomb pitch, matching the events CHECK constraints.
+PITCH_X_MIN = 0.0
+PITCH_X_MAX = 120.0
+PITCH_Y_MIN = 0.0
+PITCH_Y_MAX = 80.0
+OFF_PITCH_REASON = "coordinates_off_pitch"
+
+_PITCH_COLUMNS: tuple[tuple[str, float, float], ...] = (
+    ("location_x", PITCH_X_MIN, PITCH_X_MAX),
+    ("location_y", PITCH_Y_MIN, PITCH_Y_MAX),
+    ("end_location_x", PITCH_X_MIN, PITCH_X_MAX),
+    ("end_location_y", PITCH_Y_MIN, PITCH_Y_MAX),
+)
+
 # Column order and dtypes matching CREATE TABLE events.
 EVENTS_SCHEMA: dict[str, pl.DataType] = {
     "event_id": pl.Utf8,
@@ -138,6 +152,36 @@ def _second_expr(schema: pl.Schema) -> pl.Expr:
 
     integer_second = _cast(_navigate(schema, "second"), pl.Float64)
     return pl.coalesce(timestamp_second, integer_second).cast(pl.Float64)
+
+
+def off_pitch_mask(events: pl.DataFrame) -> pl.Expr:
+    """True when a present coordinate sits outside the 120x80 pitch.
+
+    Null coordinates stay in events. Many StatsBomb types have no location,
+    and the events CHECKs already allow that.
+    """
+    outside = [
+        pl.col(name).is_not_null() & ((pl.col(name) < low) | (pl.col(name) > high))
+        for name, low, high in _PITCH_COLUMNS
+        if name in events.columns
+    ]
+    if not outside:
+        return pl.lit(False)
+    return pl.any_horizontal(outside)
+
+
+def partition_off_pitch(events: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Split rows that would fail the pitch CHECKs from rows safe to insert.
+
+    The rejected frame adds `reason`. Event indexes are left as assigned so a
+    gap still points at the source file.
+    """
+    rejected_flag = off_pitch_mask(events)
+    kept = events.filter(~rejected_flag)
+    rejected = events.filter(rejected_flag).with_columns(
+        pl.lit(OFF_PITCH_REASON).alias("reason")
+    )
+    return kept, rejected
 
 
 def transform_statsbomb_events(

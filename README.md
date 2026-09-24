@@ -80,7 +80,7 @@ Event, lineup, and match-catalogue JSON live in [`data/`](data/).
 ## Tests
 
 ```bash
-python -m unittest tests.test_match_analytics
+python -m unittest discover -s tests
 ```
 
 ## Data credit

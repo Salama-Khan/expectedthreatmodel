@@ -73,10 +73,11 @@ def run_pipeline(
         )
 
     logger.info(
-        "Finished run_id=%s status=%s inserted_count=%s",
+        "Finished run_id=%s status=%s inserted_count=%s quarantined_count=%s",
         result.run_id,
         result.status,
         result.inserted_count,
+        result.quarantined_count,
     )
 
 

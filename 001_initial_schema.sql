@@ -150,6 +150,20 @@ CREATE TABLE events (
     )
 );
 
+-- Coordinates outside 120x80 never enter events. The row is kept so quarantined_count is explainable.
+CREATE TABLE quarantined_events (
+    run_id UUID NOT NULL REFERENCES ingestion_runs(run_id),
+    event_id UUID NOT NULL,
+    match_id INT NOT NULL,
+    event_index INT NOT NULL,
+    reason TEXT NOT NULL,
+    location_x FLOAT,
+    location_y FLOAT,
+    end_location_x FLOAT,
+    end_location_y FLOAT,
+    PRIMARY KEY (run_id, event_id)
+);
+
 CREATE TABLE event_threat (
     model_id TEXT,
     model_version TEXT,
@@ -171,6 +185,7 @@ CREATE TABLE event_threat (
 CREATE INDEX idx_matches_run ON matches(run_id);
 CREATE INDEX idx_matches_season ON matches(season_id);
 CREATE INDEX idx_events_run ON events(run_id);
+CREATE INDEX idx_quarantined_events_run ON quarantined_events(run_id);
 CREATE INDEX idx_xt_models_run ON xt_models(run_id);
 
 CREATE INDEX idx_events_actor ON events (match_id, team_id, actor_player_id);
