@@ -6,8 +6,6 @@ It ingests event-level match data into Postgres, fits a [Karun Singh-style](http
 
 ![Touchline match view: Barcelona 3–0 Deportivo Alavés, with an interactive pitch and xT timeline](screenshots/match.png)
 
-The model is unsmoothed and trained on a small open-data corpus. Values are exploratory, not a production-grade xT product.
-
 ## Screenshots
 
 **Players** — ranked on-ball impact. Positive xT is threat created; net xT subtracts value lost on incomplete passes.
@@ -105,5 +103,6 @@ The xT formulation follows Karun Singh’s public Expected Threat write-up.
 ## Scope
 
 - Singh-style xT on a 16×12 StatsBomb grid, without spatial smoothing
+- Trained on a small open-data corpus; values are exploratory, not a production-grade xT product
 - On-ball actions only: passes, carries, and shots
 - Showcase matches include a 2018/19 La Liga fixture (`15946`) and 2018 World Cup matches
