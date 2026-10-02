@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:14                      # name:tag. - pin the version of postgresql
+    environment:
+      POSTGRES_USER: football_user              # initiate role on first startup only
+      POSTGRES_PASSWORD: football_pw            # image refuses to start without a password
+      POSTGRES_DB: football_db                  ## initiate db on first startup only
+    volumes:
+      - football_data:/var/lib/postgresql/data  # create volume to prevent football data being lost
+      - ./001_initial_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro  # mount the schema file - :ro prevents the file from being modified
+    ports:
+      - "5433:5432"                          # HOST:CONTAINER. use 5433 on host side to avoid local postgres clash
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U football_user -d football_db"]
+      interval: 5s                           # how often to run the test
+      timeout: 3s                            # how long one test may take
+      retries: 10                            # failures allowed before "unhealthy"
+
+  api:
+    build:
+      context: .                             # context is the folder that contains the Dockerfile
+      dockerfile: Dockerfile                 # dockerfile is the file that contains the build instructions
+    environment:
+      DATABASE_URL: postgresql://football_user:football_pw@db:5432/football_db   # database url is the connection string for the database
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy           # wait until the healthcheck passes before starting the api
+
+volumes:
+  football_data:                              # declare the volume here, use it in the db service
