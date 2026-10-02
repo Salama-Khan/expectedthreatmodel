@@ -15,7 +15,7 @@ services:
       interval: 5s                           # how often to run the test
       timeout: 3s                            # how long one test may take
       retries: 10                            # failures allowed before "unhealthy"
-
+  
   api:
     build:
       context: .                             # context is the folder that contains the Dockerfile
@@ -28,5 +28,14 @@ services:
       db:
         condition: service_healthy           # wait until the healthcheck passes before starting the api
 
+  frontend:
+    build:
+      context: ./frontend            # build from the frontend folder, using frontend/Dockerfile
+    environment:
+      API_URL: http://api:8000       # read by vite.config.ts; the service name, not 127.0.0.1
+    ports:
+      - "5173:5173"                  # HOST:CONTAINER, so your browser can reach Vite
+    depends_on:
+      - api                          # start the API first
 volumes:
   football_data:                              # declare the volume here, use it in the db service
