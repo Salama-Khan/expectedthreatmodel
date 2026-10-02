@@ -1,5 +1,7 @@
 # Touchline — Expected Threat Explorer
 
+[![Tests](https://github.com/Salama-Khan/expectedthreatmodel/actions/workflows/tests.yml/badge.svg)](https://github.com/Salama-Khan/expectedthreatmodel/actions/workflows/tests.yml)
+
 Touchline is a full-stack football analytics app that turns [StatsBomb Open Data](https://github.com/statsbomb/open-data) into an interactive Expected Threat (xT) explorer.
 
 It ingests event-level match data into Postgres, fits a [Karun Singh-style](https://karun.in/blog/expected-threat.html) xT surface on a 16×12 pitch grid, and scores every pass, carry, and shot so you can inspect **who moved threat**, not just who shot.
@@ -88,7 +90,7 @@ Open [http://localhost:5173](http://localhost:5173). The Vite dev server proxies
 
 ## Quick start (without Docker)
 
-You need **Python 3.11+** (tested on 3.12), **Node.js 20+**, and a local **PostgreSQL** with a `postgres` role.
+You need **Python 3.11+** (CI tests 3.11, 3.12 and 3.13), **Node.js 20+**, and a local **PostgreSQL** with a `postgres` role.
 
 Check your versions first: `python3 --version`. If your default `python3` is older than 3.11, use an explicit interpreter such as `python3.12` below.
 
@@ -122,10 +124,11 @@ python ingest_open_data.py --competition 43 --season 3 --limit 8
 Event, lineup, and match-catalogue JSON live in [`data/`](data/).
 ## Tests
 
-Run it inside the activated virtual environment.
 ```bash
 python -m unittest discover -s tests
 ```
+
+Run it inside the activated virtual environment. GitHub Actions runs the same tests on Python 3.11, 3.12 and 3.13 for every push to `main` and every pull request ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Data credit
 
