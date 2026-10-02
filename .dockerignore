@@ -1,0 +1,61 @@
+# Version control. The image only needs source, not history.
+.git
+.gitignore
+.gitattributes
+
+# Local Python installs and bytecode. Dependencies come from pip in the image.
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+**/*.py[cod]
+*$py.class
+*.egg-info
+**/*.egg-info
+.pytest_cache
+**/.pytest_cache
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+.coverage
+htmlcov
+.tox
+
+# Secrets. Compose injects DATABASE_URL; do not bake env files into the image.
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+
+# Editor, OS, and agent metadata.
+.DS_Store
+**/.DS_Store
+.vscode
+.idea
+.cursor
+*.swp
+*.log
+*.local
+
+# Frontend is a separate Vite app. node_modules would dominate the build context.
+frontend
+node_modules
+**/node_modules
+dist
+dist-ssr
+
+# Tests and notes are not imported by the API process.
+tests
+*.md
+
+# Local event dumps. The API reads Postgres; the schema is bind-mounted into db.
+data
+*.sql
+
+# Not needed inside the image that this file is building.
+Dockerfile
+docker-compose.yml
+.dockerignore
