@@ -61,7 +61,7 @@ Start/end zone does not see pressure, height, or receiver, so most failures look
 You need **Docker Desktop**, running. Check with `docker info`; if it prints an error, start Docker Desktop first. Docker needs several GB of free disk space for the Postgres and Python images.
 
 ```bash
-# 1. Start Postgres and the API (applies 001_initial_schema.sql on first start)
+# 1. Start Postgres, the API and the UI (applies 001_initial_schema.sql on first start)
 docker compose up --build -d
 
 # 2. Load one match into the container database
@@ -76,13 +76,7 @@ To check the load from the database side:
 docker compose exec db psql -U football_user -d football_db -c "SELECT count(*) FROM events;"
 ```
 
-The UI is not in Compose yet. Run it separately; the API must already be running:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Open the UI at [http://localhost:5173](http://localhost:5173). Inside Compose, the Vite dev server proxies `/api` to the `api` service (set by `API_URL`). If the page loads before the API is ready, refresh once.
 
 Open [http://localhost:5173](http://localhost:5173). The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
