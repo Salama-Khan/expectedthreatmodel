@@ -32,6 +32,16 @@ flowchart TD
   XtEngine --> API[FastAPI]
   API --> UI[React UI]
 ```
+
+| Layer | Role |
+| --- | --- |
+| [`001_initial_schema.sql`](001_initial_schema.sql) | Match, player, event, and ingestion-lineage tables |
+| [`events_transform.py`](events_transform.py) / [`events_loader.py`](events_loader.py) | Flatten StatsBomb events and COPY them into Postgres |
+| [`xt_engine.py`](xt_engine.py) | Solve `(I - P) xT = b` from shots, moves, and zone transitions |
+| [`main.py`](main.py) | REST API for matches, the xT surface, and scored analytics |
+| [`pass_complete.py`](pass_complete.py) | Logistic regression on pass start/end zone; split by match |
+| [`frontend/src`](frontend/src) | Vite + React + TypeScript explorer |
+
 ## Pass-complete check (not xT)
 
 [`pass_complete.py`](pass_complete.py) is a leakage check, not a second threat model.
@@ -45,32 +55,30 @@ flowchart TD
 
 Start/end zone does not see pressure, height, or receiver, so most failures look like ordinary zone-to-zone passes. That is why Touchline scores a failed pass with the leak-to-zero rule, not this classifier.
 
-| Layer | Role |
-| --- | --- |
-| [`001_initial_schema.sql`](001_initial_schema.sql) | Match, player, event, and ingestion-lineage tables |
-| [`events_transform.py`](events_transform.py) / [`events_loader.py`](events_loader.py) | Flatten StatsBomb events and COPY them into Postgres |
-| [`xt_engine.py`](xt_engine.py) | Solve `(I - P) xT = b` from shots, moves, and zone transitions |
-| [`main.py`](main.py) | REST API for matches, the xT surface, and scored analytics |
-| [`pass_complete.py`](pass_complete.py) | Logistic regression on pass start/end zone; split by match |
-| [`frontend/src`](frontend/src) | Vite + React + TypeScript explorer |
 
-## Quick start
+## Quick start (Docker, recommended)
 
-You need **Python 3.11+**, **Node.js 20+**, and a local **PostgreSQL** instance.
+You need **Docker Desktop**, running. Check with `docker info`; if it prints an error, start Docker Desktop first. Docker needs several GB of free disk space for the Postgres and Python images.
 
 ```bash
-# 1. Database
-createdb footballanalysis
-psql footballanalysis -f 001_initial_schema.sql
+# 1. Start Postgres and the API (applies 001_initial_schema.sql on first start)
+docker compose up --build -d
 
-# 2. API
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python run_pipeline.py data/15946.json
-uvicorn main:app --reload --port 8000
+# 2. Load one match into the container database
+docker compose run --rm -v "$(pwd)/data:/app/data" api python run_pipeline.py data/15946.json
+```
 
-# 3. UI (separate terminal)
+Check it worked: open [http://127.0.0.1:8000/api/matches/15946/analytics](http://127.0.0.1:8000/api/matches/15946/analytics). The interactive API docs are at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+
+To check the load from the database side:
+
+```bash
+docker compose exec db psql -U football_user -d football_db -c "SELECT count(*) FROM events;"
+```
+
+The UI is not in Compose yet. Run it separately; the API must already be running:
+
+```bash
 cd frontend
 npm install
 npm run dev
@@ -78,7 +86,38 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
-Default database URL is `postgresql://postgres@localhost:5432/footballanalysis`. Override with `DATABASE_URL` if your local role or port differs.
+**Notes**
+
+- The database is also reachable from your machine on port **5433** (not 5432, to avoid clashing with a local Postgres): `psql -h localhost -p 5433 -U football_user football_db`.
+- The credentials in `docker-compose.yml` are **local-development defaults**, not for deployment.
+- `docker compose down` stops everything and keeps your data. `docker compose down -v` also deletes the database volume. The schema file only runs when the volume is empty, so after changing the schema you need `down -v` and a fresh load.
+
+## Quick start (without Docker)
+
+You need **Python 3.11+** (tested on 3.12), **Node.js 20+**, and a local **PostgreSQL** with a `postgres` role.
+
+Check your versions first: `python3 --version`. If your default `python3` is older than 3.11, use an explicit interpreter such as `python3.12` below.
+
+```bash
+# 1. Database (these commands use the postgres role)
+createdb -U postgres footballanalysis
+psql -U postgres -d footballanalysis -f 001_initial_schema.sql
+
+# 2. API
+python3.12 -m venv .venv
+source .venv/bin/activate        # repeat this in every new terminal
+pip install -r requirements.txt
+python run_pipeline.py data/15946.json
+python -m uvicorn main:app --reload --port 8000
+```
+
+Confirm the virtual environment is active (your prompt starts with `(.venv)`, and `which python` points inside `.venv`). Use `python -m uvicorn` so the venv's Python is the one that runs.
+
+Check the load: `psql -U postgres -d footballanalysis -c "SELECT count(*) FROM events;"`, then open [http://127.0.0.1:8000/api/matches/15946/analytics](http://127.0.0.1:8000/api/matches/15946/analytics).
+
+Then start the UI as in the Docker section.
+
+Default database URL is `postgresql://postgres@localhost:5432/footballanalysis`. Override it with the `DATABASE_URL` environment variable (both the API and `run_pipeline.py` read it).
 
 To load a competition-season instead of one file:
 
@@ -87,9 +126,9 @@ python ingest_open_data.py --competition 43 --season 3 --limit 8
 ```
 
 Event, lineup, and match-catalogue JSON live in [`data/`](data/).
-
 ## Tests
 
+Run it inside the activated virtual environment.
 ```bash
 python -m unittest discover -s tests
 ```
