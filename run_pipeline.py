@@ -5,11 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
 import psycopg
-
 from events_loader import load_events
 from events_transform import transform_statsbomb_events
 from seed_match_context import ensure_lineup_path, seed_match_context
@@ -91,8 +91,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--database-url",
-        default=DEFAULT_DATABASE_URL,
-        help="Postgres URL (default: postgresql://postgres@localhost:5432/footballanalysis)",
+        default=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL),
+        help="Postgres URL (default: $DATABASE_URL, else postgresql://postgres@localhost:5432/footballanalysis)",
     )
     args = parser.parse_args()
     run_pipeline(args.events_path, database_url=args.database_url)
