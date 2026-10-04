@@ -122,13 +122,34 @@ python ingest_open_data.py --competition 43 --season 3 --limit 8
 ```
 
 Event, lineup, and match-catalogue JSON live in [`data/`](data/).
+
+## Data reliability
+
+**Idempotent reloads.** Loading the same match twice does not duplicate events. Before the bulk `COPY`, the loader looks up which `event_id`s are already stored and drops them ([`drop_known_event_ids`](events_loader.py)); `COPY` cannot use `ON CONFLICT`, so de-duplication happens before the write. Smaller tables use `ON CONFLICT` directly. Each load is recorded in `ingestion_runs` with its `inserted_count`, so a repeat load shows `0`.
+
+Proved by `test_loading_same_match_twice_adds_no_events` in [`tests/test_integration_db.py`](tests/test_integration_db.py): it loads match `15946` twice against a real Postgres and asserts the event count stays at 3,762 and the second run inserted nothing.
+
+**Quarantine for bad rows.** Events with coordinates outside the 120×80 pitch never enter `events`, where CHECK constraints would otherwise abort the whole load. They go to `quarantined_events` with the reason and original coordinates, and the run's `quarantined_count` records how many were set aside.
+
+Proved by `test_off_pitch_event_is_quarantined_and_counted` in the same file: it moves one event off the pitch and asserts that event is quarantined, the other 3,761 still load, and the run reports `quarantined_count = 1`.
+
+Both tests run in CI against a Postgres service container. To run them locally against the Compose database (use a separate test database; the tests empty every table):
+
+```bash
+docker compose exec db createdb -U football_user touchline_test
+docker compose exec -T db psql -U football_user -d touchline_test < 001_initial_schema.sql
+TEST_DATABASE_URL=postgresql://football_user:football_pw@localhost:5433/touchline_test python -m unittest discover -s tests
+```
+
+Without `TEST_DATABASE_URL`, the database tests are skipped.
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-Run it inside the activated virtual environment. GitHub Actions runs the same tests on Python 3.11, 3.12 and 3.13 for every push to `main` and every pull request ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
+GitHub Actions runs the unit tests on Python 3.11, 3.12 and 3.13, and the database tests against Postgres 14, for every push to `main` and every pull request ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Data credit
 
