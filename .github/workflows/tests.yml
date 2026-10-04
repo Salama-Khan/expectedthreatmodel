@@ -22,3 +22,35 @@ jobs:
 
       - name: Run unit tests
         run: python -m unittest discover -s tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: football_user
+          POSTGRES_PASSWORD: football_pw
+          POSTGRES_DB: touchline_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U football_user -d touchline_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://football_user:football_pw@localhost:5432/touchline_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply schema
+        run: psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f 001_initial_schema.sql
+
+      - name: Run tests against Postgres
+        run: python -m unittest discover -s tests
