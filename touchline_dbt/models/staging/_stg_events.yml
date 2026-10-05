@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: Cleaned StatsBomb events, one row per event that passed pitch validation.
+    columns:
+      - name: event_id
+        description: StatsBomb event UUID.
+        data_tests:
+          - not_null
+          - unique
+      - name: match_id
+        data_tests:
+          - not_null
+      - name: event_type
+        data_tests:
+          - not_null

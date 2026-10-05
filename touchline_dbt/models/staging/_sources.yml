@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: touchline
+    description: Raw tables written by the Python ingestion pipeline.
+    schema: public
+    tables:
+      - name: events
+        description: One row per StatsBomb event that passed pitch validation.
