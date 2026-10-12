@@ -80,12 +80,26 @@ docker compose exec db psql -U football_user -d football_db -c "SELECT count(*) 
 
 Open the UI at [http://localhost:5173](http://localhost:5173). Inside Compose, the Vite dev server proxies `/api` to the `api` service (set by `API_URL`). If the page loads before the API is ready, refresh once.
 
-Open [http://localhost:5173](http://localhost:5173). The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
+### BI dashboard (Metabase)
+
+`docker compose up` also starts [Metabase](https://www.metabase.com/) at [http://localhost:3001](http://localhost:3001). On first run, create a local admin account and add a PostgreSQL connection:
+
+| Setting | Value |
+| --- | --- |
+| Host | `db` (the Compose service name, not `localhost`) |
+| Port | `5432` (the container port) |
+| Database | `football_db` |
+| Username / password | `football_user` / `football_pw` |
+
+The dashboard combines a chart on the dbt staging model (`dbt_dev.stg_events`, built by running `dbt build` in [`touchline_dbt/`](touchline_dbt/)), a SQL question ranking players by total xT, and a pipeline-health table built from `ingestion_runs`. Metabase stores its settings and dashboards in the `metabase_data` volume, so they survive container restarts but are not part of the repo.
+
+![Metabase dashboard](screenshots/metabase.png)
 
 **Notes**
 
 - The database is also reachable from your machine on port **5433** (not 5432, to avoid clashing with a local Postgres): `psql -h localhost -p 5433 -U football_user football_db`.
 - The credentials in `docker-compose.yml` are **local-development defaults**, not for deployment.
+- The containers need host ports 5173 (UI), 8000 (API), 3001 (Metabase) and 5433 (Postgres). Stop any local `npm run dev`, `uvicorn` or Next.js server using them first.
 - `docker compose down` stops everything and keeps your data. `docker compose down -v` also deletes the database volume. The schema file only runs when the volume is empty, so after changing the schema you need `down -v` and a fresh load.
 
 ## Quick start (without Docker)
